@@ -1,9 +1,5 @@
 <div align="center">
-  <img
-    src="https://raw.githubusercontent.com/DongLaoAI/donglao-tts/main/assets/donglao-tts-logo.png"
-    alt="donglao-tts — angular horizontal singing crocodile logo"
-    width="720"
-  >
+  <img src="https://raw.githubusercontent.com/DongLaoAI/donglao-tts/main/assets/donglao-tts-logo.png" alt="donglao-tts — angular horizontal singing crocodile logo" width="720" />
 
   <h1>donglao-tts</h1>
 </div>

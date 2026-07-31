@@ -1,11 +1,7 @@
 <div align="center">
   <p><strong>English</strong> · <a href="README.vi.md">Tiếng Việt</a></p>
 
-  <img
-    src="./assets/donglao-tts-logo.png"
-    alt="donglao-tts — angular horizontal singing crocodile logo"
-    width="720"
-  >
+  <img src="assets/donglao-tts-logo.png" alt="donglao-tts — angular horizontal singing crocodile logo" width="720" />
 
   <h1>donglao-tts</h1>
 
