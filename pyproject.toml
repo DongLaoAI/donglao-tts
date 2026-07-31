@@ -1,0 +1,90 @@
+[build-system]
+requires = ["hatchling==1.31.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "donglao-tts"
+version = "0.1.0"
+description = "AR+NAR neural TTS (RVQ audio-codec based) with a MOSS codec front-end"
+readme = { file = "PYPI.md", content-type = "text/markdown" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.10,<3.11"
+authors = [
+    { name = "donglao-tts maintainers" },
+]
+keywords = ["tts", "speech-synthesis", "vietnamese", "rvq", "pytorch"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+
+dependencies = [
+    "numpy>=1.26,<3",
+    "torch>=2.11,<2.12",
+    "torchaudio>=2.11,<2.12",
+    "torchcodec>=0.12,<0.14",
+    "transformers>=5.13,<5.14",
+    "sentencepiece>=0.2,<0.3",
+    "pyyaml>=6,<7",
+    "donglao-g2p>=0.3,<0.4",
+    "huggingface_hub>=1,<2",
+    "safetensors>=0.8,<1",
+]
+
+[project.urls]
+Homepage = "https://github.com/DongLaoAI/donglao-tts"
+Repository = "https://github.com/DongLaoAI/donglao-tts.git"
+Issues = "https://github.com/DongLaoAI/donglao-tts/issues"
+Models = "https://huggingface.co/DongLao/DongLao-TTS"
+
+[project.optional-dependencies]
+export = ["onnx>=1.22,<2", "onnxruntime>=1.23,<1.24"]
+openvino = ["openvino>=2026.2,<2027"]
+gguf = ["gguf>=0.19,<0.20"]
+
+[project.scripts]
+donglao-train = "donglao_tts.cli.train:main"
+donglao-infer = "donglao_tts.cli.infer:main"
+donglao-onnx-infer = "donglao_tts.cli.onnx_infer:main"
+donglao-push-to-hub = "donglao_tts.hub:_push_to_hub_cli"
+donglao-prepare-dataset = "donglao_tts.cli.prepare_dataset:main"
+donglao-compile-dataset = "donglao_tts.cli.compile_dataset:main"
+donglao-phonemize-manifest = "donglao_tts.cli.phonemize_manifest:main"
+donglao-build-phoneme-corpus = "donglao_tts.cli.build_phoneme_corpus:main"
+donglao-build-tokenizer = "donglao_tts.cli.build_tokenizer:main"
+donglao-init-config = "donglao_tts.cli.init_config:main"
+donglao-smoke-test-hub = "donglao_tts.cli.smoke_test_hub:main"
+
+[dependency-groups]
+dev = [
+    "build>=1.3,<2",
+    "check-wheel-contents>=0.6,<1",
+    "pip-audit>=2.9,<3",
+    "pytest>=9.0.3,<10",
+    "ruff>=0.12,<1",
+    "soundfile>=0.13,<1",
+    "twine>=6.2,<7",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/donglao_tts"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"configs/base.yaml" = "donglao_tts/resources/base.yaml"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

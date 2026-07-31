@@ -1,0 +1,1 @@
+python3 src/donglao_tts/cli/infer.py --config configs/base.yaml

@@ -1,0 +1,93 @@
+codec:
+  repo_id: OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano
+  # This repository uses custom Python code through trust_remote_code=True. Keep the dependency
+  # pinned to an immutable commit and review upstream changes before updating this SHA.
+  revision: 6aa02b01e445cc585582cf0ba480bc3ea6c8dd68
+  num_quantizers: 8
+  device: cuda
+
+tokenizer:
+  vocab_size: 1000
+  character_coverage: 1.0
+  model_type: unigram
+  byte_fallback: false
+  model_path: DATASET/tokenize/models_v1/spm.model
+  user_defined_symbols:
+    - "[BOS]"
+    - "[EOS]"
+    - "[TEXT_REF]"
+    - "[CODE_REF]"
+    - "[TEXT_TARGET]"
+    - "[CODE_TARGET]"
+
+model:
+  d_model: 512
+  rope_theta: 10000.0
+  ar:
+    backbone: qwen3   # custom (TransformerBlock+RoPE, from ar_model.py) | qwen3 (Qwen3Model from scratch)
+    ref_num_quantizers: 8   # only the first N RVQ layers of ref_codec are embedded (summed per frame)
+    n_layers: 12
+    n_heads: 8
+    n_kv_heads: 4     # only used when backbone: qwen3 (GQA); ignored otherwise
+    ffn_dim: 2048
+    dropout: 0.1
+  nar:
+    n_layers: 6
+    n_heads: 8
+    ffn_dim: 2048
+    dropout: 0.1
+  precision: bf16   # float32 | bf16 | fp16
+
+train:
+  datasets:
+    - DATASET/complied_v1/dataset
+  val_split_ratio: 0.01
+  seed: 42
+  batch_size: 14        # maximum utterances per batch
+  max_frames_per_batch: 7000  # sum of target + reference codec frames; 0 disables
+  bucket_size: 256
+  reference_percentile: 90  # shortest per-speaker percentile eligible as voice prompts
+  grad_accum_steps: 2
+  num_workers: 4
+  prefetch_factor: 4
+  lr: 3.0e-4
+  weight_decay: 0.01
+  warmup_steps: 4000
+  max_steps: 1000000
+  grad_clip: 1.0
+  ar_loss_weight: 1.0
+  nar_loss_weight: 1.0
+  nar_start_step: 0   # step at which NAR loss/backward starts joining AR training (0 = from the start)
+  target_prompt_aug_prob: 0.1   # AR-branch-only: probability a sample's target_codec loss is cut
+                                  # at a random point, treating the prefix as unlabeled prompt
+                                  # continuation context instead of a loss target (see
+                                  # build_input_embeds); 0 = always full-target loss (old behavior)
+  init_checkpoint: null   # path to a step_*.pt to initialize AR/NAR weights from when starting a
+                           # FRESH run (step=0, new optimizer) -- e.g. warm-starting from a
+                           # self-supervised pretraining checkpoint before fine-tuning on
+                           # speaker-labeled data. NOT the same as --resume: this only seeds
+                           # weights once at start, never restores optimizer/step, and is ignored
+                           # entirely if --resume finds/uses an existing checkpoint in
+                           # checkpoint_dir (continuing that run always takes priority). null
+                           # (default) disables this -- train from random init as usual.
+  qat: false   # Quantization-Aware Training: wrap nn.Linear layers with fake-quant before the
+              # optimizer is built (see cli/train.py, quantization.py). Typical usage: train
+              # fp32 to convergence first, then a separate --resume run with qat: true for a
+              # short fake-quant fine-tune -- not meant to be on from step 0 of a fresh run.
+  qat_backend: fbgemm    # fbgemm (x86 server CPU) | qnnpack (ARM/mobile) -- only matters if you
+                         # later go through PyTorch's own int8 convert(), not the ONNX/PTQ path
+  log_every_steps: 500
+  eval_every_steps: 1000
+  checkpoint_dir: run_01/
+  save_every_steps: 2000
+  keep_last_checkpoints: 2
+
+sample:
+  ref_audio: DATASET/raw/libritts100/audio/000000016.wav
+  ref_text: "The bullet striking the wooden casing of the window exploded, blowing a hole completely through the wood and masonry."
+  target_text: "Xin chào mọi người. This is a multilingual speech synthesis example."
+  max_frames: 500
+  temperature: 0.8   # <=0 for the old deterministic argmax; see ar_generate_rvq0's docstring for
+                      # why pure argmax tends to lock into a repeated-code loop on an imperfect AR
+  top_k: 10
+  output_path: run_01/sample/gen.wav

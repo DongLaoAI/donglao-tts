@@ -1,0 +1,57 @@
+# Private datasets, training runs, checkpoints, and generated model bundles
+DATASET/
+run/
+run_*/
+debugs/
+tests/codec_rvq_output/
+
+# Model weights, exports, generated media, and compiled arrays
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+*.gguf
+*.wav
+*.flac
+*.mp3
+*.ogg
+*.npy
+*.npz
+*.jsonl
+*.model
+*.vocab
+
+# Python build and test artifacts
+__pycache__/
+*.pyc
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments, caches, and local configuration
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+.cache/
+configs/local.yaml
+configs/*.local.yaml
+*.log
+
+# Private keys and common credential files
+*.pem
+*.key
+*.p12
+credentials.json
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
