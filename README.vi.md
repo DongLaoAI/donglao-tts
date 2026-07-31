@@ -114,7 +114,7 @@ Runtime được hỗ trợ:
 
 - Python `>=3.10,<3.11`
 - Linux x86-64
-- Thư viện chia sẻ FFmpeg 4–8
+- PyTorch và TorchAudio `>=2.8.0,<3`
 - Khuyến nghị GPU hỗ trợ CUDA; vẫn có thể inference bằng CPU
 
 Tạo môi trường riêng với uv:
@@ -191,10 +191,10 @@ lại, sau đó MOSS codec trong model bundle chuyển chúng thành audio.
 
 Bỏ `device="cuda"` để tự chọn device, hoặc truyền `device="cpu"`.
 
-### Lỗi TorchCodec hoặc FFmpeg
+### Phiên bản PyTorch và TorchAudio không khớp
 
-Kiểm tra thư viện chia sẻ FFmpeg đã được cài và môi trường hiện tại có thể tìm thấy chúng. Package
-tự cài phiên bản TorchCodec tương thích với PyTorch đã khóa.
+Cài PyTorch và TorchAudio cùng phiên bản phát hành. Ví dụ, dùng `torch==2.8.0` cùng với
+`torchaudio==2.8.0`. DongLao TTS dùng SoundFile cho audio I/O và không yêu cầu TorchCodec.
 
 ### Reference audio does not exist
 

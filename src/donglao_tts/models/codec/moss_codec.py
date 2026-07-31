@@ -1,5 +1,6 @@
 import os
 
+import soundfile as sf
 import torch
 import torchaudio
 import yaml
@@ -33,7 +34,8 @@ class MossCodec:
         )
 
     def load_audio(self, audio_path):
-        wav, sr = torchaudio.load(audio_path)
+        audio, sr = sf.read(audio_path, dtype="float32", always_2d=True)
+        wav = torch.from_numpy(audio.T.copy())
         self.input_channels = wav.shape[0]
         if wav.shape[0] > 1:
             wav = wav.mean(0, keepdim=True)  # downmix to mono
@@ -60,5 +62,8 @@ class MossCodec:
         return out.audio[0].cpu()  # [C,T_samples]
 
     def save_audio(self, wav, path):
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        torchaudio.save(path, wav, self.sampling_rate)
+        parent_dir = os.path.dirname(os.fspath(path))
+        if parent_dir:
+            os.makedirs(parent_dir, exist_ok=True)
+        audio = wav.detach().cpu().transpose(0, 1).numpy()
+        sf.write(path, audio, self.sampling_rate)

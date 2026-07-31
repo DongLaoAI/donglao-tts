@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "donglao-tts"
-version = "0.1.4"
+version = "0.1.5"
 description = "AR+NAR neural TTS (RVQ audio-codec based) with a MOSS codec front-end"
 readme = { file = "PYPI.md", content-type = "text/markdown" }
 license = "Apache-2.0"
@@ -27,9 +27,9 @@ classifiers = [
 
 dependencies = [
     "numpy>=1.26,<3",
-    "torch>=2.11,<2.12",
-    "torchaudio>=2.11,<2.12",
-    "torchcodec>=0.12,<0.14",
+    "torch>=2.8.0,<3",
+    "torchaudio>=2.8.0,<3",
+    "soundfile>=0.13,<1",
     "transformers>=5.13,<5.14",
     "sentencepiece>=0.2,<0.3",
     "pyyaml>=6,<7",
@@ -69,7 +69,6 @@ dev = [
     "pip-audit>=2.9,<3",
     "pytest>=9.0.3,<10",
     "ruff>=0.12,<1",
-    "soundfile>=0.13,<1",
     "twine>=6.2,<7",
 ]
 

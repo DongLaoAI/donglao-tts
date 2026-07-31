@@ -68,7 +68,7 @@ The returned waveform is a CPU PyTorch tensor with shape `[channels, samples]`.
 
 - Python `>=3.10,<3.11`
 - Linux x86-64
-- FFmpeg 4–8 shared libraries
+- PyTorch and TorchAudio `>=2.8.0,<3`
 - CUDA-capable GPU recommended; CPU inference is supported
 
 ## Reference audio

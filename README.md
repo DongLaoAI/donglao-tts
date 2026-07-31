@@ -114,7 +114,7 @@ Supported runtime:
 
 - Python `>=3.10,<3.11`
 - Linux x86-64
-- FFmpeg 4–8 shared libraries
+- PyTorch and TorchAudio `>=2.8.0,<3`
 - A CUDA-capable GPU is recommended; CPU inference is supported
 
 Create a dedicated environment with uv:
@@ -191,10 +191,10 @@ model fills the remaining codec layers, and the bundled MOSS codec converts them
 
 Remove `device="cuda"` to enable automatic device selection, or pass `device="cpu"`.
 
-### TorchCodec or FFmpeg error
+### PyTorch and TorchAudio version mismatch
 
-Confirm that FFmpeg shared libraries are installed and visible to the current environment. The
-package installs a TorchCodec version compatible with its pinned PyTorch runtime.
+Install matching PyTorch and TorchAudio releases. For example, use `torch==2.8.0` together with
+`torchaudio==2.8.0`. DongLao TTS uses SoundFile for audio I/O and does not require TorchCodec.
 
 ### Reference audio does not exist
 
