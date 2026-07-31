@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "donglao-tts"
-version = "0.1.1"
+version = "0.1.2"
 description = "AR+NAR neural TTS (RVQ audio-codec based) with a MOSS codec front-end"
 readme = { file = "PYPI.md", content-type = "text/markdown" }
 license = "Apache-2.0"
