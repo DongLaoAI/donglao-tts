@@ -45,7 +45,7 @@ jobs:
         run: |
           uv sync --locked --group dev --all-extras
           uv run --locked ruff check src scripts tests
-          uv run --locked pytest -q
+          uv run --locked python -m pytest -q
           uv pip check
           uv export \
             --locked \

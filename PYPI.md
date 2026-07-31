@@ -2,100 +2,99 @@
   <img src="https://raw.githubusercontent.com/DongLaoAI/donglao-tts/main/assets/donglao-tts-logo.png" alt="donglao-tts — angular horizontal singing crocodile logo" width="720" />
 
   <h1>donglao-tts</h1>
+
+  <p><strong>Reference-voice text-to-speech with a simple Python API.</strong></p>
 </div>
 
-An AR + NAR text-to-speech toolkit built on residual vector quantization.
+> Research/pre-1.0 release. APIs may change between versions. Use reference voices only with the
+> speaker's permission.
 
-`donglao-tts` supports model training, reference-voice speech synthesis, Hugging Face model
-bundles, ONNX/OpenVINO export, and quantization experiments. The sample configuration targets
-Vietnamese and uses
-[MOSS-Audio-Tokenizer-Nano](https://huggingface.co/OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano)
-as its audio codec.
-
-> **Project status:** research/pre-1.0. APIs may change between releases. This package does not
-> include a pretrained checkpoint, dataset, tokenizer, or production HTTP service.
-
-The current release supports Python 3.10 on Linux x86-64. Model weights are distributed
-separately through Hugging Face Hub. FFmpeg 4-8 shared libraries are required for audio I/O.
-
-## Install
-
-```bash
-python -m pip install donglao-tts
-```
-
-Install an optional runtime:
-
-```bash
-python -m pip install "donglao-tts[export]"
-python -m pip install "donglao-tts[openvino]"
-python -m pip install "donglao-tts[gguf]"
-```
-
-With uv:
+## Recommended Python API
 
 ```bash
 uv add donglao-tts
-uv add "donglao-tts[export]"
+
+# Or with pip
+python -m pip install donglao-tts
 ```
-
-Verify that the installed package can download and load the published weights:
-
-```bash
-donglao-smoke-test-hub --repo-id DongLao/DongLao-TTS --device cpu
-```
-
-## Python API
 
 ```python
 from donglao_tts import DongLaoTTS
 
 tts = DongLaoTTS.from_pretrained("DongLao/DongLao-TTS")
+
 waveform = tts.generate(
-    "Text to synthesize.",
+    "Xin chào mọi người, đây là Đông Lào TTS.",
     reference_audio="reference.wav",
-    reference_text="Exact transcript of the reference recording.",
+    reference_text="Exact transcript of the speech in reference.wav.",
     output_path="output.wav",
+)
+
+print(tts.revision)
+print(tts.sample_rate)
+print(tuple(waveform.shape))
+```
+
+The first call downloads the model, tokenizer, and bundled MOSS codec. CUDA is selected when
+available; otherwise the model runs on CPU. Reuse the loaded `tts` object for subsequent calls.
+
+For reproducible use, pin a tested model commit:
+
+```python
+tts = DongLaoTTS.from_pretrained(
+    "DongLao/DongLao-TTS",
+    revision="6ba3003ccb8d938c2a725a4117084492909c9419",
+    device="cuda",
 )
 ```
 
-Reuse the loaded `tts` object for additional synthesis calls. The method returns the generated
-waveform as a CPU PyTorch tensor, whether or not `output_path` is provided.
+Generation controls are available when needed:
 
-## Commands
-
-Every model command requires an explicit YAML configuration:
-
-```bash
-donglao-init-config configs/local.yaml
-donglao-train --config configs/local.yaml --resume none
-donglao-infer --config configs/local.yaml --device cuda
-donglao-push-to-hub \
-  --config configs/local.yaml \
-  --checkpoint run/step_120000.pt \
-  --repo-id YOUR_ORG/donglao-tts \
-  --private
+```python
+waveform = tts.generate(
+    "Text to synthesize.",
+    reference_audio="reference.wav",
+    reference_text="Exact reference transcript.",
+    output_path="output.wav",  # optional
+    max_frames=200,
+    temperature=1.0,
+    top_k=0,
+)
 ```
 
-Data-preparation commands are included in the package:
+The returned waveform is a CPU PyTorch tensor with shape `[channels, samples]`.
+
+## Runtime requirements
+
+- Python `>=3.10,<3.11`
+- Linux x86-64
+- FFmpeg 4–8 shared libraries
+- CUDA-capable GPU recommended; CPU inference is supported
+
+## Reference audio
+
+Use a clean, consented recording containing one speaker. `reference_text` must match the spoken
+content exactly. Avoid music, overlapping speakers, clipping, long silence, and heavy reverb.
+
+## Verify the installation
 
 ```bash
-donglao-prepare-dataset --help
-donglao-phonemize-manifest --help
-donglao-build-phoneme-corpus --help
-donglao-build-tokenizer --help
-donglao-init-config --help
+donglao-smoke-test-hub \
+  --repo-id DongLao/DongLao-TTS \
+  --device cpu
 ```
 
-## Security and responsible use
+For an end-to-end test, also pass `--ref-audio`, `--ref-text`, `--target-text`, and `--output`.
 
-The MOSS codec requires Hugging Face remote code. The sample configuration pins it to an
-immutable commit; review upstream changes before updating that revision. PyTorch checkpoints are
-loaded with `weights_only=True`, while shared model bundles use `safetensors`.
+## Responsible use
 
-Use reference voices only with appropriate consent. Protect audio, transcripts, embeddings, and
-checkpoints as sensitive data, and do not use the project for impersonation, fraud, harassment,
-or bypassing voice authentication.
+Obtain consent before using a voice, disclose synthetic audio when appropriate, and protect
+reference recordings and transcripts. Do not use the package for impersonation, fraud,
+harassment, or bypassing voice authentication.
 
-The source repository contains complete English and Vietnamese documentation, architecture
-notes, development instructions, security boundaries, and the project roadmap.
+## Links
+
+- [Source and full documentation](https://github.com/DongLaoAI/donglao-tts)
+- [Published model](https://huggingface.co/DongLao/DongLao-TTS)
+- [Issue tracker](https://github.com/DongLaoAI/donglao-tts/issues)
+- [Apache License 2.0](https://github.com/DongLaoAI/donglao-tts/blob/main/LICENSE)

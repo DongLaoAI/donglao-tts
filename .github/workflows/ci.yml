@@ -46,7 +46,7 @@ jobs:
         run: uv run --locked python -m compileall -q src scripts tests
 
       - name: Run tests
-        run: uv run --locked pytest -q
+        run: uv run --locked python -m pytest -q
 
       - name: Check installed dependencies
         run: uv pip check
