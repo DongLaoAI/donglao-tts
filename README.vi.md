@@ -2,9 +2,9 @@
   <p><a href="README.md">English</a> · <strong>Tiếng Việt</strong></p>
 
   <img
-    src="assets/donglao-tts-logo-transparent.png"
-    alt="donglao-tts — cyber crocodile with an audio waveform"
-    width="220"
+    src="./assets/donglao-tts-logo.png"
+    alt="donglao-tts — logo cá sấu hát nằm ngang, hình học góc cạnh"
+    width="720"
   >
 
   <h1>donglao-tts</h1>
