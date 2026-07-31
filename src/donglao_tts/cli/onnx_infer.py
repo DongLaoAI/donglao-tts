@@ -25,7 +25,6 @@ from donglao_tts.export.onnx_export import (
     export_ar_qwen3_prefill,
     export_nar_layer,
 )
-from donglao_tts.export.onnx_generate import OnnxARGenerator, OnnxNARGenerator
 from donglao_tts.generate import ar_generate_rvq0, build_sample_from_config, make_batch, nar_fill_layers
 from donglao_tts.models.build import build_models
 from donglao_tts.models.codec.moss_codec import MossCodec
@@ -72,9 +71,11 @@ def main():
 
     try:
         import onnxruntime as ort
+        from donglao_tts.export.onnx_generate import OnnxARGenerator, OnnxNARGenerator
     except ImportError as e:
         raise ImportError(
-            "donglao-onnx-infer needs the 'export' extra: pip install -e '.[export]'"
+            "donglao-onnx-infer needs the 'export' extra: "
+            'pip install "donglao-tts[export]"'
         ) from e
 
     cfg = load_config(args.config)
