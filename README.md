@@ -1,7 +1,7 @@
 <div align="center">
   <p><strong>English</strong> · <a href="README.vi.md">Tiếng Việt</a></p>
 
-  <img src="assets/donglao-tts-logo.png" alt="donglao-tts — angular horizontal singing crocodile logo" width="720" />
+  <img src="assets/donglao-tts-logo.png" alt="donglao-tts — angular horizontal singing crocodile logo" width="432" />
 
   <h1>donglao-tts</h1>
 
@@ -53,7 +53,7 @@ print("Waveform shape:", tuple(waveform.shape))
 the selected model revision to an immutable commit before downloading the files. The first call
 downloads the model, tokenizer, and bundled MOSS audio codec; later calls reuse the local cache.
 
-Keep the `tts` object alive and reuse it for multiple requests:
+Keep the `tts` object alive and use the batch API for targets sharing one reference:
 
 ```python
 texts = [
@@ -62,14 +62,31 @@ texts = [
     "Bạn có thể tổng hợp nhiều câu liên tiếp.",
 ]
 
-for index, text in enumerate(texts):
-    tts.generate(
-        text,
-        reference_audio="reference.wav",
-        reference_text="Exact transcript of the speech in reference.wav.",
-        output_path=f"outputs/result-{index}.wav",
-    )
+waveforms = tts.generate_batch(
+    texts,
+    reference_audio="reference.wav",
+    reference_text="Exact transcript of the speech in reference.wav.",
+    output_paths=[f"outputs/result-{index}.wav" for index in range(len(texts))],
+)
 ```
+
+Batch inference phonemizes and encodes the shared reference once. AR/NAR generation remains
+independent for each target. For codec-token streaming, consume each decoded RVQ chunk:
+
+```python
+for audio_chunk in tts.generate_stream(
+    "The first sentence. The second sentence.",
+    reference_audio="reference.wav",
+    reference_text="Exact transcript of the speech in reference.wav.",
+    chunk_frames=5,
+):
+    send_audio(audio_chunk, sample_rate=tts.sample_rate)
+```
+
+The AR model keeps its KV-cache and produces `chunk_frames` RVQ0 tokens at a time. NAR fills the
+remaining RVQ layers for that group, then MOSS decodes and yields its waveform while AR generation
+continues. The final group in a sentence may contain fewer frames. With a 25 Hz codec,
+`chunk_frames=5` corresponds to approximately 200 ms of audio.
 
 For reproducible production use, pin the tested model commit and select the device explicitly:
 
@@ -90,8 +107,8 @@ waveform = tts.generate(
     reference_text="Exact reference transcript.",
     output_path="output.wav",  # optional
     max_frames=200,
-    temperature=1.0,
-    top_k=0,
+    temperature=0.8,
+    top_k=10,
 )
 ```
 
@@ -105,8 +122,9 @@ waveform = tts.generate(
 | `temperature` | Sampling temperature; `0` selects greedy decoding |
 | `top_k` | Sampling cutoff; `0` disables top-k truncation |
 
-The method returns a CPU `torch.Tensor` with shape `[channels, samples]`, whether or not an
-`output_path` is supplied.
+After G2P conversion, the target is split on periods and each sentence is synthesized separately.
+The sentence waveforms are concatenated in order. The method returns a CPU `torch.Tensor` with
+shape `[channels, samples]`, whether or not an `output_path` is supplied.
 
 ## Installation
 
@@ -132,41 +150,6 @@ cd donglao-tts
 uv sync --locked
 ```
 
-## Reference audio
-
-The model transfers voice characteristics from a reference recording.
-
-- Use a clean recording with one speaker and minimal background noise.
-- Provide the exact spoken transcript in `reference_text`.
-- Avoid long silence, music, overlapping speakers, clipping, or heavy reverberation.
-- Use only recordings you have permission to process.
-
-An inaccurate transcript can reduce pronunciation quality and voice consistency.
-
-## Verify the installation
-
-Check that the installed package can download and construct the published model:
-
-```bash
-donglao-smoke-test-hub \
-  --repo-id DongLao/DongLao-TTS \
-  --device cpu
-```
-
-Run an end-to-end synthesis check:
-
-```bash
-donglao-smoke-test-hub \
-  --repo-id DongLao/DongLao-TTS \
-  --device cuda \
-  --ref-audio reference.wav \
-  --ref-text "Exact transcript of the reference recording." \
-  --target-text "Text to synthesize." \
-  --output smoke-test.wav
-```
-
-A successful run prints `PASS` after loading the AR model, NAR model, tokenizer, and MOSS codec.
-
 ## How it works
 
 ```mermaid
@@ -184,43 +167,6 @@ flowchart LR
 
 The AR model generates the first residual-vector-quantization layer and hidden states. The NAR
 model fills the remaining codec layers, and the bundled MOSS codec converts them into audio.
-
-## Troubleshooting
-
-### CUDA was requested, but CUDA is not available
-
-Remove `device="cuda"` to enable automatic device selection, or pass `device="cpu"`.
-
-### PyTorch and TorchAudio version mismatch
-
-Install matching PyTorch and TorchAudio releases. For example, use `torch==2.8.0` together with
-`torchaudio==2.8.0`. DongLao TTS uses SoundFile for audio I/O and does not require TorchCodec.
-
-### Reference audio does not exist
-
-Pass an existing path. Relative paths are resolved from the process's current working directory.
-
-### The model generated zero frames
-
-Check the reference audio and transcript, then retry with a longer reference recording or a
-different sampling temperature.
-
-### First startup takes longer
-
-The first call downloads the model bundle. Subsequent calls use the Hugging Face cache unless a
-different revision is requested or the cache is cleared.
-
-## Responsible use
-
-Voice synthesis can affect a speaker's privacy, identity, and safety.
-
-- Obtain appropriate consent before using a voice.
-- Disclose synthetic audio when the context could otherwise be misleading.
-- Protect reference audio and transcripts as sensitive data.
-- Review applicable licenses and laws before deployment.
-- Do not use the project for impersonation, fraud, harassment, or bypassing voice authentication.
-
-See [SECURITY.md](SECURITY.md) for vulnerability reporting and trust boundaries.
 
 ## Contributing
 

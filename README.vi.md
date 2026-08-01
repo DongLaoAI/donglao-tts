@@ -1,7 +1,7 @@
 <div align="center">
   <p><a href="README.md">English</a> · <strong>Tiếng Việt</strong></p>
 
-  <img src="assets/donglao-tts-logo.png" alt="donglao-tts — logo cá sấu hát nằm ngang, hình học góc cạnh" width="720" />
+  <img src="assets/donglao-tts-logo.png" alt="donglao-tts — logo cá sấu hát nằm ngang, hình học góc cạnh" width="432" />
 
   <h1>donglao-tts</h1>
 
@@ -53,7 +53,7 @@ print("Waveform shape:", tuple(waveform.shape))
 được resolve thành commit bất biến trước khi tải. Lần gọi đầu tải model, tokenizer và MOSS audio
 codec đã đóng gói; những lần sau sử dụng Hugging Face cache.
 
-Giữ đối tượng `tts` trong bộ nhớ và tái sử dụng cho nhiều request:
+Giữ đối tượng `tts` trong bộ nhớ và dùng batch API cho các target có cùng reference:
 
 ```python
 texts = [
@@ -62,14 +62,30 @@ texts = [
     "Bạn có thể tổng hợp nhiều câu liên tiếp.",
 ]
 
-for index, text in enumerate(texts):
-    tts.generate(
-        text,
-        reference_audio="reference.wav",
-        reference_text="Transcript chính xác của nội dung trong reference.wav.",
-        output_path=f"outputs/result-{index}.wav",
-    )
+waveforms = tts.generate_batch(
+    texts,
+    reference_audio="reference.wav",
+    reference_text="Transcript chính xác của nội dung trong reference.wav.",
+    output_paths=[f"outputs/result-{index}.wav" for index in range(len(texts))],
+)
 ```
+
+Batch inference chỉ phonemize và encode reference dùng chung một lần; phần sinh AR/NAR vẫn độc lập
+cho từng target. Với codec-token streaming, xử lý từng RVQ chunk sau khi decode:
+
+```python
+for audio_chunk in tts.generate_stream(
+    "Đây là câu thứ nhất. Đây là câu thứ hai.",
+    reference_audio="reference.wav",
+    reference_text="Transcript chính xác của nội dung trong reference.wav.",
+    chunk_frames=5,
+):
+    send_audio(audio_chunk, sample_rate=tts.sample_rate)
+```
+
+AR giữ nguyên KV-cache và sinh mỗi lần `chunk_frames` token RVQ0. NAR điền các tầng RVQ còn lại
+cho nhóm token đó, sau đó MOSS decode và trả waveform trong khi AR tiếp tục sinh. Nhóm cuối của
+mỗi câu có thể ít frame hơn. Với codec 25 Hz, `chunk_frames=5` tương ứng khoảng 200 ms audio.
 
 Trong production, nên khóa commit model đã kiểm thử và chỉ định device rõ ràng:
 
@@ -90,8 +106,8 @@ waveform = tts.generate(
     reference_text="Transcript chính xác của audio tham chiếu.",
     output_path="output.wav",  # không bắt buộc
     max_frames=200,
-    temperature=1.0,
-    top_k=0,
+    temperature=0.8,
+    top_k=10,
 )
 ```
 
@@ -105,8 +121,9 @@ waveform = tts.generate(
 | `temperature` | Nhiệt độ sampling; `0` dùng greedy decoding |
 | `top_k` | Ngưỡng sampling; `0` tắt top-k truncation |
 
-Hàm trả về `torch.Tensor` trên CPU có shape `[channels, samples]`, kể cả khi không truyền
-`output_path`.
+Sau bước G2P, văn bản đích được tách theo dấu chấm và từng câu được sinh riêng. Các waveform của
+từng câu được nối lại theo đúng thứ tự. Hàm trả về `torch.Tensor` trên CPU có shape
+`[channels, samples]`, kể cả khi không truyền `output_path`.
 
 ## Cài đặt
 
@@ -132,41 +149,6 @@ cd donglao-tts
 uv sync --locked
 ```
 
-## Audio tham chiếu
-
-Model lấy đặc trưng giọng nói từ một bản thu tham chiếu.
-
-- Dùng bản thu sạch, một người nói và ít tạp âm.
-- `reference_text` phải khớp chính xác nội dung được nói.
-- Tránh khoảng lặng dài, âm nhạc, nhiều người nói, clipping hoặc vang mạnh.
-- Chỉ sử dụng bản thu mà bạn có quyền xử lý.
-
-Transcript không chính xác có thể làm giảm chất lượng phát âm và độ ổn định của giọng.
-
-## Kiểm tra cài đặt
-
-Kiểm tra package đã cài có thể tải và dựng model đã phát hành:
-
-```bash
-donglao-smoke-test-hub \
-  --repo-id DongLao/DongLao-TTS \
-  --device cpu
-```
-
-Chạy kiểm tra tổng hợp end-to-end:
-
-```bash
-donglao-smoke-test-hub \
-  --repo-id DongLao/DongLao-TTS \
-  --device cuda \
-  --ref-audio reference.wav \
-  --ref-text "Transcript chính xác của bản thu tham chiếu." \
-  --target-text "Nội dung cần tổng hợp." \
-  --output smoke-test.wav
-```
-
-Khi thành công, lệnh in `PASS` sau khi load AR, NAR, tokenizer và MOSS codec.
-
 ## Cách hoạt động
 
 ```mermaid
@@ -184,42 +166,6 @@ flowchart LR
 
 AR sinh lớp residual-vector-quantization đầu tiên cùng hidden state. NAR điền các lớp codec còn
 lại, sau đó MOSS codec trong model bundle chuyển chúng thành audio.
-
-## Xử lý sự cố
-
-### CUDA was requested, but CUDA is not available
-
-Bỏ `device="cuda"` để tự chọn device, hoặc truyền `device="cpu"`.
-
-### Phiên bản PyTorch và TorchAudio không khớp
-
-Cài PyTorch và TorchAudio cùng phiên bản phát hành. Ví dụ, dùng `torch==2.8.0` cùng với
-`torchaudio==2.8.0`. DongLao TTS dùng SoundFile cho audio I/O và không yêu cầu TorchCodec.
-
-### Reference audio does not exist
-
-Truyền đường dẫn tồn tại. Đường dẫn tương đối được tính từ thư mục làm việc hiện tại của process.
-
-### Model sinh 0 frame
-
-Kiểm tra audio và transcript tham chiếu, sau đó thử bản thu dài hơn hoặc thay đổi temperature.
-
-### Lần khởi động đầu tiên lâu hơn
-
-Lần gọi đầu tải model bundle. Những lần sau dùng Hugging Face cache, trừ khi chọn revision khác
-hoặc cache bị xóa.
-
-## Sử dụng có trách nhiệm
-
-Tổng hợp giọng nói có thể ảnh hưởng đến quyền riêng tư, danh tính và an toàn của người nói.
-
-- Có sự đồng ý phù hợp trước khi sử dụng giọng nói.
-- Ghi rõ audio tổng hợp khi ngữ cảnh có thể gây hiểu nhầm.
-- Bảo vệ audio và transcript tham chiếu như dữ liệu nhạy cảm.
-- Kiểm tra giấy phép và quy định áp dụng trước khi triển khai.
-- Không dùng dự án để giả mạo, lừa đảo, quấy rối hoặc vượt qua xác thực giọng nói.
-
-Xem [SECURITY.md](SECURITY.md) để báo cáo lỗ hổng và tìm hiểu trust boundary.
 
 ## Đóng góp
 

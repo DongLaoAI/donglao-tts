@@ -137,8 +137,8 @@ def main():
     t0 = time.perf_counter()
     rvq0_codes, ar_hidden = ar_generate_rvq0(
         ar_model, special, codebook_size, ref_text_ids, ref_codec, target_text_ids, CPU, dtype,
-        max_frames=sample_cfg["max_frames"], temperature=sample_cfg.get("temperature", 1.0),
-        top_k=sample_cfg.get("top_k", 0))
+        max_frames=sample_cfg["max_frames"], temperature=sample_cfg.get("temperature", 0.8),
+        top_k=sample_cfg.get("top_k", 10))
     ar_pt_time = time.perf_counter() - t0
     if len(rvq0_codes) == 0:
         raise RuntimeError("AR generated 0 frames -- nothing to feed the NAR/ONNX check")

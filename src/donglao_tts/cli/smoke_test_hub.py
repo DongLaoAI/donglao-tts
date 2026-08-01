@@ -72,8 +72,8 @@ def _parse_args(argv=None):
     parser.add_argument("--target-text", help="text to synthesize")
     parser.add_argument("--output", default="hub-smoke-test.wav")
     parser.add_argument("--max-frames", type=int, default=64)
-    parser.add_argument("--temperature", type=float, default=1.0)
-    parser.add_argument("--top-k", type=int, default=0)
+    parser.add_argument("--temperature", type=float, default=0.8)
+    parser.add_argument("--top-k", type=int, default=10)
     return parser.parse_args(argv)
 
 

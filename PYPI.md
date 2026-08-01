@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://raw.githubusercontent.com/DongLaoAI/donglao-tts/main/assets/donglao-tts-logo.png" alt="donglao-tts — angular horizontal singing crocodile logo" width="720" />
+  <img src="https://raw.githubusercontent.com/DongLaoAI/donglao-tts/main/assets/donglao-tts-logo.png" alt="donglao-tts — angular horizontal singing crocodile logo" width="432" />
 
   <h1>donglao-tts</h1>
 
@@ -57,12 +57,40 @@ waveform = tts.generate(
     reference_text="Exact reference transcript.",
     output_path="output.wav",  # optional
     max_frames=200,
-    temperature=1.0,
-    top_k=0,
+    temperature=0.8,
+    top_k=10,
 )
 ```
 
-The returned waveform is a CPU PyTorch tensor with shape `[channels, samples]`.
+After G2P conversion, the target is split on periods, synthesized sentence by sentence, and the
+resulting audio is concatenated in order. The returned waveform is a CPU PyTorch tensor with shape
+`[channels, samples]`.
+
+Multiple targets sharing the same reference can reuse its preprocessing with `generate_batch()`:
+
+```python
+waveforms = tts.generate_batch(
+    ["First target.", "Second target."],
+    reference_audio="reference.wav",
+    reference_text="Exact reference transcript.",
+)
+```
+
+`generate_stream()` yields audio decoded from consecutive RVQ-token groups:
+
+```python
+for audio_chunk in tts.generate_stream(
+    "First sentence. Second sentence.",
+    reference_audio="reference.wav",
+    reference_text="Exact reference transcript.",
+    chunk_frames=5,
+):
+    consume(audio_chunk)
+```
+
+The AR KV-cache is preserved between groups. NAR completes the remaining RVQ layers and MOSS
+decodes each group while AR generation continues. At a 25 Hz codec rate, five frames represent
+approximately 200 ms of audio.
 
 ## Runtime requirements
 

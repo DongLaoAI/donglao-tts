@@ -43,7 +43,7 @@ class OnnxARGenerator:
         self.decode_input_names = {item.name for item in self.decode_session.get_inputs()}
 
     @torch.no_grad()
-    def generate_rvq0(self, input_embeds, padding_mask, max_frames=200, temperature=1.0, top_k=0,
+    def generate_rvq0(self, input_embeds, padding_mask, max_frames=200, temperature=0.8, top_k=10,
                        seed=None, return_hidden=False):
         """input_embeds [1,L,D] float32, padding_mask [1,L] bool -- the already-assembled prompt
         (see generate.py's build_input_embeds), computed in PyTorch exactly as before. Returns a
