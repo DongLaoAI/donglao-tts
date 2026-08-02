@@ -1,4 +1,5 @@
 import argparse
+import copy
 import math
 import os
 import random
@@ -23,6 +24,7 @@ from donglao_tts.models.embeddings import (
     extract_target_hidden,
     migrate_legacy_ar_state_dict,
 )
+from donglao_tts.models.training_aux import CTCAuxiliaryHead, eos_auxiliary_loss
 from donglao_tts.quantization import prepare_model_qat
 from donglao_tts.utils.precision import resolve_dtype
 
@@ -39,6 +41,28 @@ def get_lr(step, warmup_steps, max_steps, base_lr):
         return base_lr * step / max(1, warmup_steps)
     progress = min(1.0, (step - warmup_steps) / max(1, max_steps - warmup_steps))
     return base_lr * 0.5 * (1 + math.cos(math.pi * progress))
+
+
+def get_aux_weight(step, warmup_steps, base_weight):
+    """Linearly introduce a training-only objective, then hold its configured weight."""
+    if base_weight <= 0:
+        return 0.0
+    if warmup_steps <= 0:
+        return base_weight
+    return base_weight * min(1.0, step / warmup_steps)
+
+
+def extend_optimizer_state(saved_state, extra_param_count):
+    """Add fresh parameters to a legacy single-group Adam state without losing old momentum."""
+    if extra_param_count <= 0:
+        return saved_state
+    state = copy.deepcopy(saved_state)
+    if len(state["param_groups"]) != 1:
+        raise ValueError("cannot extend a legacy optimizer with more than one parameter group")
+    parameter_ids = state["param_groups"][0]["params"]
+    next_id = max(parameter_ids, default=-1) + 1
+    parameter_ids.extend(range(next_id, next_id + extra_param_count))
+    return state
 
 
 def find_latest_checkpoint(checkpoint_dir):
@@ -60,7 +84,7 @@ def count_params(model):
 
 
 def print_run_info(cfg, device, dtype, vocab_size, codebook_size, num_quantizers,
-                    ar_model, nar_model, train_ds, val_ds):
+                    ar_model, nar_model, ctc_model, train_ds, val_ds):
     model_cfg, train_cfg = cfg["model"], cfg["train"]
 
     print("=" * 60)
@@ -74,6 +98,16 @@ def print_run_info(cfg, device, dtype, vocab_size, codebook_size, num_quantizers
           f"n_heads={model_cfg['nar']['n_heads']} ffn_dim={model_cfg['nar']['ffn_dim']} "
           f"params={count_params(nar_model):,}")
     print(f"  total params={count_params(ar_model) + count_params(nar_model):,}")
+    if ctc_model is not None:
+        print(
+            f"  CTC: training-only upsample={ctc_model.upsample_factor}x "
+            f"weight={train_cfg['ctc_loss_weight']} params={count_params(ctc_model):,}"
+        )
+    if train_cfg.get("eos_aux_loss_weight", 0.0) > 0:
+        print(
+            f"  EOS auxiliary: shared-logit balanced loss "
+            f"weight={train_cfg['eos_aux_loss_weight']} (no inference head)"
+        )
 
     print("Dataset")
     if "datasets" in train_cfg:
@@ -107,8 +141,9 @@ def print_run_info(cfg, device, dtype, vocab_size, codebook_size, num_quantizers
     print("=" * 60)
 
 
-def run_step(ar_model, nar_model, special, num_quantizers, batch, device, dtype,
-             ar_loss_weight, nar_loss_weight, train_nar=True, target_prompt_aug_prob=0.0):
+def run_step(ar_model, nar_model, ctc_model, special, num_quantizers, batch, device, dtype,
+             ar_loss_weight, nar_loss_weight, ctc_loss_weight=0.0, eos_aux_loss_weight=0.0,
+             train_nar=True, target_prompt_aug_prob=0.0):
     """NAR now conditions on the AR's own per-frame hidden state (see extract_target_hidden),
     so its gradient flows back into the AR -- real joint training, not just a shared batch. All
     `num_quantizers-1` remaining RVQ layers are trained every step (not one random layer), each via
@@ -132,16 +167,33 @@ def run_step(ar_model, nar_model, special, num_quantizers, batch, device, dtype,
         ar_valid = labels != -100
         ar_loss = (ar_per_token.sum(dim=1) / ar_valid.sum(dim=1).clamp(min=1)).mean()
 
+        eos_loss = eos_auxiliary_loss(
+            ar_logits, batch["target_codec_len"], target_start_idx, ar_model.codebook_size)
+        loss = ar_loss_weight * ar_loss + eos_aux_loss_weight * eos_loss
+
+        if ctc_model is not None and ctc_loss_weight > 0:
+            ar_hidden_at_target = extract_target_hidden(
+                ar_hidden, batch["target_codec_len"], target_start_idx)
+            ctc_loss = ctc_model.loss(
+                ar_hidden_at_target,
+                batch["target_codec_len"],
+                batch["target_text_ids"],
+                batch["target_text_len"],
+            )
+            loss = loss + ctc_loss_weight * ctc_loss
+        else:
+            ctc_loss = torch.zeros((), device=device, dtype=ar_loss.dtype)
+
         nar_losses_by_layer = {}
         if not train_nar:
             # NAR training hasn't started yet (see train.nar_start_step) -- skip every layer's
             # forward/loss entirely to save compute during the AR-only warmup phase.
             nar_loss = torch.zeros((), device=device, dtype=ar_loss.dtype)
-            loss = ar_loss_weight * ar_loss
-            return loss, ar_loss, nar_loss, nar_losses_by_layer
+            return loss, ar_loss, nar_loss, ctc_loss, eos_loss, nar_losses_by_layer
 
-        ar_hidden_at_target = extract_target_hidden(
-            ar_hidden, batch["target_codec_len"], target_start_idx)
+        if ctc_model is None or ctc_loss_weight <= 0:
+            ar_hidden_at_target = extract_target_hidden(
+                ar_hidden, batch["target_codec_len"], target_start_idx)
 
         T_tgt_max = batch["target_codec"].shape[1]
         target_pad_mask = make_time_pad_mask(batch["target_codec_len"], T_tgt_max, device)
@@ -157,8 +209,8 @@ def run_step(ar_model, nar_model, special, num_quantizers, batch, device, dtype,
             nar_loss_sum = nar_loss_sum + loss_k
         nar_loss = nar_loss_sum / (num_quantizers - 1)
 
-    loss = ar_loss_weight * ar_loss + nar_loss_weight * nar_loss
-    return loss, ar_loss, nar_loss, nar_losses_by_layer
+    loss = loss + nar_loss_weight * nar_loss
+    return loss, ar_loss, nar_loss, ctc_loss, eos_loss, nar_losses_by_layer
 
 
 def main():
@@ -259,8 +311,16 @@ def main():
     vocab_size = sp.get_piece_size()
 
     ar_model, nar_model, codebook_size, num_quantizers = build_models(cfg, vocab_size, device)
+    ctc_loss_weight = float(train_cfg.get("ctc_loss_weight", 0.0))
+    ctc_model = None
+    if ctc_loss_weight > 0:
+        ctc_model = CTCAuxiliaryHead(
+            d_model=model_cfg["d_model"],
+            vocab_size=vocab_size,
+            upsample_factor=int(train_cfg.get("ctc_upsample_factor", 2)),
+        ).to(device)
     print_run_info(cfg, device, dtype, vocab_size, codebook_size, num_quantizers,
-                    ar_model, nar_model, train_ds, val_ds)
+                    ar_model, nar_model, ctc_model, train_ds, val_ds)
 
     checkpoint_dir = train_cfg["checkpoint_dir"]
     os.makedirs(checkpoint_dir, exist_ok=True)
@@ -296,7 +356,9 @@ def main():
         print(f"QAT enabled: nn.Linear layers wrapped with fake-quant "
               f"(backend={train_cfg.get('qat_backend', 'fbgemm')})")
 
-    params = list(ar_model.parameters()) + list(nar_model.parameters())
+    main_params = list(ar_model.parameters()) + list(nar_model.parameters())
+    ctc_params = list(ctc_model.parameters()) if ctc_model is not None else []
+    params = main_params + ctc_params
     optimizer = torch.optim.AdamW(params, lr=train_cfg["lr"], weight_decay=train_cfg["weight_decay"])
 
     sample_codec = MossCodec.from_config(args.config)
@@ -306,6 +368,10 @@ def main():
 
     step = 0  # real optimizer-update count -- see get_lr's docstring for why this must not be a
               # micro-batch/accumulation-substep count
+    # Auxiliary warmup counts start when each objective is introduced, not at the run's global
+    # step. Thus adding CTC to a mature legacy checkpoint still ramps its freshly initialized head.
+    ctc_step = 0
+    eos_aux_step = 0
     if resume_path is not None:
         print(f"resuming from checkpoint {resume_path}")
         ckpt = load_checkpoint(resume_path, map_location=device)
@@ -322,10 +388,19 @@ def main():
         # calibrate from data as fine-tuning proceeds) -- the actual learned weights still load.
         ar_model.load_state_dict(ar_state, strict=not qat_enabled)
         nar_model.load_state_dict(ckpt["nar_model"], strict=not qat_enabled)
+        checkpoint_has_ctc = ctc_model is not None and "ctc_model" in ckpt
+        if checkpoint_has_ctc:
+            ctc_model.load_state_dict(ckpt["ctc_model"])
+        elif ctc_model is not None:
+            print("  checkpoint predates the training-only CTC head; initialized CTC weights "
+                  "from scratch while preserving AR/NAR weights")
         if not is_legacy_embedding and not qat_enabled:
             # optimizer state references the pre-QAT parameter tensors -- doesn't line up with
             # the freshly QAT-wrapped ones, same reasoning as the legacy-embedding case above.
-            optimizer.load_state_dict(ckpt["optimizer"])
+            optimizer_state = ckpt["optimizer"]
+            if ctc_model is not None and not checkpoint_has_ctc:
+                optimizer_state = extend_optimizer_state(optimizer_state, len(ctc_params))
+            optimizer.load_state_dict(optimizer_state)
         if ckpt.get("step_unit") == "optimizer":
             step = ckpt["step"]
         else:
@@ -335,6 +410,8 @@ def main():
             step = ckpt["step"] // train_cfg["grad_accum_steps"]
             print(f"  checkpoint used legacy micro-step counting (raw step={ckpt['step']}); "
                   f"converted to {step} real optimizer steps")
+        ctc_step = int(ckpt.get("ctc_step", 0)) if checkpoint_has_ctc else 0
+        eos_aux_step = int(ckpt.get("eos_aux_step", 0))
         print(f"  resumed at optimizer step {step}")
 
     optimizer.zero_grad()
@@ -348,9 +425,15 @@ def main():
             batch = next(data_iter)
 
         train_nar = step >= train_cfg["nar_start_step"]
-        loss, ar_loss, nar_loss, nar_losses_by_layer = run_step(
-            ar_model, nar_model, special, num_quantizers, batch, device, dtype,
+        current_ctc_weight = get_aux_weight(
+            ctc_step, train_cfg.get("ctc_warmup_steps", 0), ctc_loss_weight)
+        current_eos_weight = get_aux_weight(
+            eos_aux_step, train_cfg.get("eos_aux_warmup_steps", 0),
+            float(train_cfg.get("eos_aux_loss_weight", 0.0)))
+        loss, ar_loss, nar_loss, ctc_loss, eos_loss, nar_losses_by_layer = run_step(
+            ar_model, nar_model, ctc_model, special, num_quantizers, batch, device, dtype,
             train_cfg["ar_loss_weight"], train_cfg["nar_loss_weight"], train_nar=train_nar,
+            ctc_loss_weight=current_ctc_weight, eos_aux_loss_weight=current_eos_weight,
             target_prompt_aug_prob=train_cfg.get("target_prompt_aug_prob", 0.0))
         (loss / train_cfg["grad_accum_steps"]).backward()
         micro_step += 1
@@ -365,6 +448,10 @@ def main():
         optimizer.step()
         optimizer.zero_grad()
         step += 1
+        if ctc_model is not None:
+            ctc_step += 1
+        if train_cfg.get("eos_aux_loss_weight", 0.0) > 0:
+            eos_aux_step += 1
 
         if step % train_cfg["log_every_steps"] == 0:
             if nar_losses_by_layer:
@@ -372,32 +459,43 @@ def main():
             else:
                 nar_str = f"not started (starts at step {train_cfg['nar_start_step']})"
             print(f"step {step} lr {current_lr:.2e} loss {loss.item():.4f} "
-                  f"ar_rvq0 {ar_loss.item():.4f} nar_avg {nar_loss.item():.4f} | nar {nar_str}")
+                  f"ar_rvq0 {ar_loss.item():.4f} nar_avg {nar_loss.item():.4f} "
+                  f"ctc {ctc_loss.item():.4f}@{current_ctc_weight:.3f} "
+                  f"eos {eos_loss.item():.4f}@{current_eos_weight:.3f} | nar {nar_str}")
 
         if step % train_cfg["eval_every_steps"] == 0:
             ar_model.eval()
             nar_model.eval()
+            if ctc_model is not None:
+                ctc_model.eval()
             with torch.no_grad():
                 val_losses = []
                 for i, vbatch in enumerate(val_dl):
                     if i >= 20:
                         break
-                    vloss, _, _, _ = run_step(
-                        ar_model, nar_model, special, num_quantizers, vbatch, device, dtype,
-                        train_cfg["ar_loss_weight"], train_cfg["nar_loss_weight"], train_nar=train_nar)
+                    vloss, _, _, _, _, _ = run_step(
+                        ar_model, nar_model, ctc_model, special, num_quantizers, vbatch, device,
+                        dtype, train_cfg["ar_loss_weight"], train_cfg["nar_loss_weight"],
+                        ctc_loss_weight=current_ctc_weight,
+                        eos_aux_loss_weight=current_eos_weight, train_nar=train_nar)
                     val_losses.append(vloss.item())
                 if val_losses:
                     print(f"step {step} val_loss {sum(val_losses) / len(val_losses):.4f}")
             ar_model.train()
             nar_model.train()
+            if ctc_model is not None:
+                ctc_model.train()
 
         if step % train_cfg["save_every_steps"] == 0:
             ckpt_path = os.path.join(checkpoint_dir, f"step_{step}.pt")
-            torch.save({
+            checkpoint = {
                 "ar_model": ar_model.state_dict(), "nar_model": nar_model.state_dict(),
                 "optimizer": optimizer.state_dict(), "step": step, "step_unit": "optimizer",
-                "config": cfg,
-            }, ckpt_path)
+                "ctc_step": ctc_step, "eos_aux_step": eos_aux_step, "config": cfg,
+            }
+            if ctc_model is not None:
+                checkpoint["ctc_model"] = ctc_model.state_dict()
+            torch.save(checkpoint, ckpt_path)
             existing = sorted(
                 (f for f in os.listdir(checkpoint_dir) if f.startswith("step_")),
                 key=lambda f: int(f.split("_")[1].split(".")[0]))

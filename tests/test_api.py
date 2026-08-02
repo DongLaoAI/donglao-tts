@@ -139,6 +139,9 @@ def test_generate_uses_sampling_defaults(tmp_path, monkeypatch):
 
     assert generation_call["sample"]["temperature"] == 0.8
     assert generation_call["sample"]["top_k"] == 10
+    assert generation_call["sample"]["sentence_pause_ms"] == 180
+    assert generation_call["sample"]["leading_silence_ms"] == 20
+    assert generation_call["sample"]["trailing_silence_ms"] == 20
 
 
 def test_generate_batch_reuses_shared_reference(tmp_path, monkeypatch):
@@ -176,6 +179,9 @@ def test_generate_batch_reuses_shared_reference(tmp_path, monkeypatch):
     assert call["texts"] == ["Câu một.", "Câu hai."]
     assert call["config"]["sample"]["temperature"] == 0.8
     assert call["config"]["sample"]["top_k"] == 10
+    assert call["config"]["sample"]["sentence_pause_ms"] == 180
+    assert call["config"]["sample"]["leading_silence_ms"] == 20
+    assert call["config"]["sample"]["trailing_silence_ms"] == 20
 
 
 def test_generate_stream_yields_codec_chunks(tmp_path, monkeypatch):
@@ -214,6 +220,9 @@ def test_generate_stream_yields_codec_chunks(tmp_path, monkeypatch):
     assert torch.equal(result[0], decoded_chunks[0])
     assert torch.equal(result[1], decoded_chunks[1])
     assert call["config"]["sample"]["target_text"] == "Câu một. Câu hai."
+    assert call["config"]["sample"]["sentence_pause_ms"] == 180
+    assert call["config"]["sample"]["leading_silence_ms"] == 20
+    assert call["config"]["sample"]["trailing_silence_ms"] == 20
     assert call["kwargs"]["max_frames"] == 200
     assert call["kwargs"]["chunk_frames"] == 5
 

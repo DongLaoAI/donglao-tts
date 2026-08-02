@@ -26,6 +26,7 @@ class _Codec:
     def __init__(self):
         self.decode_calls = 0
         self.encode_calls = 0
+        self.sampling_rate = 1000
 
     def encode_file(self, path):
         assert path == "reference.wav"
@@ -83,7 +84,11 @@ def test_generate_sample_splits_phonemes_and_concatenates_audio(monkeypatch):
     assert [call[0] for call in ar_calls] == [[2], [3]]
     assert all(call[1]["temperature"] == 0.8 for call in ar_calls)
     assert all(call[1]["top_k"] == 10 for call in ar_calls)
-    assert torch.equal(waveform, torch.tensor([[1.0, 2.0, 3.0, 4.0]]))
+    expected = torch.cat([
+        torch.zeros(1, 20), torch.tensor([[1.0, 2.0]]), torch.zeros(1, 180),
+        torch.tensor([[3.0, 4.0]]), torch.zeros(1, 20),
+    ], dim=-1)
+    assert torch.equal(waveform, expected)
     assert torch.equal(reference, torch.tensor([[0.0]]))
 
 
@@ -136,8 +141,62 @@ def test_generate_batch_encodes_reference_once(monkeypatch):
 
     assert codec.encode_calls == 1
     assert torch.equal(reference, torch.tensor([[1.0]]))
-    assert torch.equal(waveforms[0], torch.tensor([[2.0]]))
-    assert torch.equal(waveforms[1], torch.tensor([[3.0, 4.0]]))
+    expected_first = torch.cat([
+        torch.zeros(1, 20), torch.tensor([[2.0]]), torch.zeros(1, 20)
+    ], dim=-1)
+    assert torch.equal(waveforms[0], expected_first)
+    expected_second = torch.cat([
+        torch.zeros(1, 20), torch.tensor([[3.0]]), torch.zeros(1, 180),
+        torch.tensor([[4.0]]), torch.zeros(1, 20),
+    ], dim=-1)
+    assert torch.equal(waveforms[1], expected_second)
+
+
+def test_sentence_pause_can_be_disabled():
+    waveforms = [torch.tensor([[1.0, 2.0]]), torch.tensor([[3.0]])]
+    joined = generate._concatenate_sentence_waveforms(
+        waveforms,
+        {"leading_silence_ms": 0, "sentence_pause_ms": 0, "trailing_silence_ms": 0},
+        sampling_rate=48000,
+    )
+    assert torch.equal(joined, torch.tensor([[1.0, 2.0, 3.0]]))
+
+
+def test_generate_stream_yields_pause_only_between_sentences(monkeypatch):
+    pipeline = _Pipeline()
+    tokenizer = _Tokenizer()
+    codec = _Codec()
+
+    monkeypatch.setattr(
+        generate,
+        "ar_generate_rvq0_stream",
+        lambda *args, **kwargs: iter([([1], torch.zeros(1, 1, 2))]),
+    )
+    monkeypatch.setattr(
+        generate,
+        "nar_fill_layers",
+        lambda *args, **kwargs: torch.zeros(1, 2, dtype=torch.long),
+    )
+
+    chunks = list(generate.generate_sample_stream(
+        {
+            "sample": {
+                "ref_audio": "reference.wav",
+                "ref_text": "reference text",
+                "target_text": "first. second.",
+                "sentence_pause_ms": 180,
+            }
+        },
+        object(), object(), codec, tokenizer, object(), 10, 2,
+        torch.device("cpu"), torch.float32, pipeline,
+    ))
+
+    assert len(chunks) == 5
+    assert torch.equal(chunks[0], torch.zeros(1, 20))
+    assert torch.equal(chunks[1], torch.tensor([[0.0]]))
+    assert torch.equal(chunks[2], torch.zeros(1, 180))
+    assert torch.equal(chunks[3], torch.tensor([[1.0, 2.0]]))
+    assert torch.equal(chunks[4], torch.zeros(1, 20))
 
 
 def test_ar_stream_preserves_cache_and_yields_frame_groups(monkeypatch):

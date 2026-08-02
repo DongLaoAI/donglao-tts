@@ -7,7 +7,14 @@ import torch
 from donglao_g2p import Pipeline
 from huggingface_hub import HfApi, hf_hub_download
 
-from donglao_tts.generate import generate_batch_samples, generate_sample, generate_sample_stream
+from donglao_tts.generate import (
+    DEFAULT_LEADING_SILENCE_MS,
+    DEFAULT_SENTENCE_PAUSE_MS,
+    DEFAULT_TRAILING_SILENCE_MS,
+    generate_batch_samples,
+    generate_sample,
+    generate_sample_stream,
+)
 from donglao_tts.hub import load_from_hub
 from donglao_tts.utils.precision import resolve_dtype
 
@@ -103,7 +110,8 @@ class DongLaoTTS:
         return self.codec.sampling_rate
 
     @staticmethod
-    def _validate_options(reference_audio, reference_text, max_frames, temperature, top_k):
+    def _validate_options(reference_audio, reference_text, max_frames, temperature, top_k,
+                          sentence_pause_ms, leading_silence_ms, trailing_silence_ms):
         if not isinstance(reference_text, str) or not reference_text.strip():
             raise ValueError("reference_text must be a non-empty string")
         reference_audio = os.fspath(reference_audio)
@@ -115,6 +123,13 @@ class DongLaoTTS:
             raise ValueError("temperature must be non-negative")
         if top_k < 0:
             raise ValueError("top_k must be non-negative")
+        for name, value in (
+            ("sentence_pause_ms", sentence_pause_ms),
+            ("leading_silence_ms", leading_silence_ms),
+            ("trailing_silence_ms", trailing_silence_ms),
+        ):
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+                raise ValueError(f"{name} must be a non-negative number")
         return os.path.abspath(reference_audio)
 
     def _generation_args(self):
@@ -149,17 +164,22 @@ class DongLaoTTS:
         max_frames=200,
         temperature=0.8,
         top_k=10,
+        sentence_pause_ms=DEFAULT_SENTENCE_PAUSE_MS,
+        leading_silence_ms=DEFAULT_LEADING_SILENCE_MS,
+        trailing_silence_ms=DEFAULT_TRAILING_SILENCE_MS,
     ):
         """Synthesize ``text`` in the reference voice and return a CPU waveform tensor.
 
         ``reference_text`` must be the exact transcript of ``reference_audio``. The target is
-        phonemized, split on periods, synthesized sentence by sentence, and concatenated. When
-        ``output_path`` is provided, the same waveform is also written as an audio file.
+        phonemized, split on periods, synthesized sentence by sentence, and concatenated with
+        ``sentence_pause_ms`` of silence between sentences. When ``output_path`` is provided, the
+        same waveform is also written as an audio file.
         """
         if not isinstance(text, str) or not text.strip():
             raise ValueError("text must be a non-empty string")
         reference_audio = self._validate_options(
-            reference_audio, reference_text, max_frames, temperature, top_k
+            reference_audio, reference_text, max_frames, temperature, top_k, sentence_pause_ms,
+            leading_silence_ms, trailing_silence_ms,
         )
 
         config = {
@@ -169,6 +189,9 @@ class DongLaoTTS:
                 "target_text": text,
                 "temperature": temperature,
                 "top_k": top_k,
+                "sentence_pause_ms": sentence_pause_ms,
+                "leading_silence_ms": leading_silence_ms,
+                "trailing_silence_ms": trailing_silence_ms,
             }
         }
         waveform, _ = generate_sample(
@@ -194,11 +217,15 @@ class DongLaoTTS:
         max_frames=200,
         temperature=0.8,
         top_k=10,
+        sentence_pause_ms=DEFAULT_SENTENCE_PAUSE_MS,
+        leading_silence_ms=DEFAULT_LEADING_SILENCE_MS,
+        trailing_silence_ms=DEFAULT_TRAILING_SILENCE_MS,
     ):
         """Synthesize multiple texts with one shared reference and return waveform tensors.
 
         G2P and reference-audio encoding are shared across the call. Each target is still decoded
-        independently so a target may contain any number of period-delimited sentences.
+        independently so a target may contain any number of period-delimited sentences. Adjacent
+        sentences are separated by ``sentence_pause_ms`` of silence.
         """
         if isinstance(texts, (str, bytes)):
             raise TypeError("texts must be an iterable of strings, not a single string")
@@ -208,7 +235,8 @@ class DongLaoTTS:
         if any(not isinstance(text, str) or not text.strip() for text in texts):
             raise ValueError("every item in texts must be a non-empty string")
         reference_audio = self._validate_options(
-            reference_audio, reference_text, max_frames, temperature, top_k
+            reference_audio, reference_text, max_frames, temperature, top_k, sentence_pause_ms,
+            leading_silence_ms, trailing_silence_ms,
         )
 
         if output_paths is None:
@@ -226,6 +254,9 @@ class DongLaoTTS:
                 "ref_text": reference_text,
                 "temperature": temperature,
                 "top_k": top_k,
+                "sentence_pause_ms": sentence_pause_ms,
+                "leading_silence_ms": leading_silence_ms,
+                "trailing_silence_ms": trailing_silence_ms,
             }
         }
         waveforms, _ = generate_batch_samples(
@@ -252,18 +283,23 @@ class DongLaoTTS:
         temperature=0.8,
         top_k=10,
         chunk_frames=5,
+        sentence_pause_ms=DEFAULT_SENTENCE_PAUSE_MS,
+        leading_silence_ms=DEFAULT_LEADING_SILENCE_MS,
+        trailing_silence_ms=DEFAULT_TRAILING_SILENCE_MS,
     ):
         """Stream audio decoded from consecutive groups of generated RVQ frames.
 
         The AR KV-cache is preserved while each group of ``chunk_frames`` RVQ0 tokens is completed
-        by the NAR model and decoded. The final group may contain fewer frames.
+        by the NAR model and decoded. The final group may contain fewer frames. A separate silence
+        chunk of ``sentence_pause_ms`` is yielded between period-delimited sentences.
         """
         if not isinstance(text, str) or not text.strip():
             raise ValueError("text must be a non-empty string")
         if not isinstance(chunk_frames, int) or isinstance(chunk_frames, bool) or chunk_frames < 1:
             raise ValueError("chunk_frames must be a positive integer")
         reference_audio = self._validate_options(
-            reference_audio, reference_text, max_frames, temperature, top_k
+            reference_audio, reference_text, max_frames, temperature, top_k, sentence_pause_ms,
+            leading_silence_ms, trailing_silence_ms,
         )
         config = {
             "sample": {
@@ -272,6 +308,9 @@ class DongLaoTTS:
                 "target_text": text,
                 "temperature": temperature,
                 "top_k": top_k,
+                "sentence_pause_ms": sentence_pause_ms,
+                "leading_silence_ms": leading_silence_ms,
+                "trailing_silence_ms": trailing_silence_ms,
             }
         }
         stream = generate_sample_stream(

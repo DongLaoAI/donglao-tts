@@ -40,13 +40,11 @@ model:
 
 train:
   datasets:
-    - DATASET/complied_v1/emilia_en
-    - DATASET/complied_v1/libritts100
-    - DATASET/complied_v1/phoaudiobook
-    - DATASET/complied_v1/vieneu
+    - DATASET/path
+
   val_split_ratio: 0.01
   seed: 42
-  batch_size: 14        # maximum utterances per batch
+  batch_size: 12              # maximum utterances per batch
   max_frames_per_batch: 7000  # sum of target + reference codec frames; 0 disables
   bucket_size: 256
   reference_percentile: 90  # shortest per-speaker percentile eligible as voice prompts
@@ -60,12 +58,22 @@ train:
   grad_clip: 1.0
   ar_loss_weight: 1.0
   nar_loss_weight: 1.0
+  # Training-only alignment objective. AR target-frame hidden states at the codec's 12.5 Hz rate
+  # are upsampled to 25 Hz by a learned ConvTranspose1d before CTC. The head is checkpointed for
+  # resume but is never constructed by inference/export.
+  ctc_loss_weight: 0.1
+  ctc_upsample_factor: 2
+  ctc_warmup_steps: 5000
+  # Balanced binary supervision on the existing shared EOS logit. This adds no separate runtime
+  # head and leaves inference's current 1024-code-plus-EOS sampling behavior unchanged.
+  eos_aux_loss_weight: 0.1
+  eos_aux_warmup_steps: 0
   nar_start_step: 0   # step at which NAR loss/backward starts joining AR training (0 = from the start)
   target_prompt_aug_prob: 0.1   # AR-branch-only: probability a sample's target_codec loss is cut
                                   # at a random point, treating the prefix as unlabeled prompt
                                   # continuation context instead of a loss target (see
                                   # build_input_embeds); 0 = always full-target loss (old behavior)
-  init_checkpoint: null   # path to a step_*.pt to initialize AR/NAR weights from when starting a
+  init_checkpoint: checkpoints/run_01/step_282000.pt   # path to a step_*.pt to initialize AR/NAR weights from when starting a
                            # FRESH run (step=0, new optimizer) -- e.g. warm-starting from a
                            # self-supervised pretraining checkpoint before fine-tuning on
                            # speaker-labeled data. NOT the same as --resume: this only seeds
@@ -81,7 +89,7 @@ train:
                          # later go through PyTorch's own int8 convert(), not the ONNX/PTQ path
   log_every_steps: 500
   eval_every_steps: 1000
-  checkpoint_dir: run_01/
+  checkpoint_dir: checkpoints/run_02/
   save_every_steps: 2000
   keep_last_checkpoints: 2
 
@@ -93,4 +101,7 @@ sample:
   temperature: 0.8   # <=0 for the old deterministic argmax; see ar_generate_rvq0's docstring for
                       # why pure argmax tends to lock into a repeated-code loop on an imperfect AR
   top_k: 10
-  output_path: run_01/sample/gen.wav
+  leading_silence_ms: 20  # silence before the first generated sentence
+  sentence_pause_ms: 180  # exact zero-valued silence inserted only between period-split sentences
+  trailing_silence_ms: 20  # silence after the final generated sentence
+  output_path: checkpoints/run_02/sample/gen.wav

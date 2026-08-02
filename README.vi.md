@@ -9,7 +9,7 @@
 
   <p>
     <img alt="Python 3.10" src="https://img.shields.io/badge/Python-3.10-3776AB?logo=python&logoColor=white">
-    <img alt="Phiên bản 0.1.0" src="https://img.shields.io/badge/version-0.1.0-00C7B7">
+    <img alt="Phiên bản 0.1.6" src="https://img.shields.io/badge/version-0.1.6-00C7B7">
     <img alt="Giấy phép Apache 2.0" src="https://img.shields.io/badge/license-Apache--2.0-7C3AED">
     <a href="https://huggingface.co/DongLao/DongLao-TTS"><img alt="Model Hugging Face" src="https://img.shields.io/badge/Hugging%20Face-DongLao--TTS-FFD21E?logo=huggingface&logoColor=black"></a>
   </p>
@@ -42,6 +42,9 @@ waveform = tts.generate(
     reference_audio="reference.wav",
     reference_text="Transcript chính xác của nội dung trong reference.wav.",
     output_path="output.wav",
+    leading_silence_ms=20,
+    sentence_pause_ms=180,
+    trailing_silence_ms=20,
 )
 
 print("Model revision:", tts.revision)
@@ -85,7 +88,8 @@ for audio_chunk in tts.generate_stream(
 
 AR giữ nguyên KV-cache và sinh mỗi lần `chunk_frames` token RVQ0. NAR điền các tầng RVQ còn lại
 cho nhóm token đó, sau đó MOSS decode và trả waveform trong khi AR tiếp tục sinh. Nhóm cuối của
-mỗi câu có thể ít frame hơn. Với codec 25 Hz, `chunk_frames=5` tương ứng khoảng 200 ms audio.
+mỗi câu có thể ít frame hơn. Với codec 12.5 Hz, `chunk_frames=5` tương ứng khoảng 400 ms audio.
+Streaming trả silence thành chunk riêng ở đầu, giữa các câu tách theo dấu chấm và ở cuối.
 
 Trong production, nên khóa commit model đã kiểm thử và chỉ định device rõ ràng:
 
@@ -108,6 +112,9 @@ waveform = tts.generate(
     max_frames=200,
     temperature=0.8,
     top_k=10,
+    leading_silence_ms=20,
+    sentence_pause_ms=180,
+    trailing_silence_ms=20,
 )
 ```
 
@@ -120,10 +127,14 @@ waveform = tts.generate(
 | `max_frames` | Số codec frame sinh tối đa |
 | `temperature` | Nhiệt độ sampling; `0` dùng greedy decoding |
 | `top_k` | Ngưỡng sampling; `0` tắt top-k truncation |
+| `leading_silence_ms` | Khoảng lặng trước câu đầu; mặc định `20` ms |
+| `sentence_pause_ms` | Khoảng lặng giữa các câu tách theo dấu chấm; mặc định `180` ms |
+| `trailing_silence_ms` | Khoảng lặng sau câu cuối; mặc định `20` ms |
 
 Sau bước G2P, văn bản đích được tách theo dấu chấm và từng câu được sinh riêng. Các waveform của
-từng câu được nối lại theo đúng thứ tự. Hàm trả về `torch.Tensor` trên CPU có shape
-`[channels, samples]`, kể cả khi không truyền `output_path`.
+từng câu được nối theo đúng thứ tự, mặc định có silence `20 / 180 / 20` ms ở đầu / giữa các câu /
+cuối. Đặt thời lượng bất kỳ về `0` để tắt phần padding đó. Hàm trả về `torch.Tensor` trên CPU có
+shape `[channels, samples]`, kể cả khi không truyền `output_path`.
 
 ## Cài đặt
 
@@ -167,6 +178,68 @@ flowchart LR
 AR sinh lớp residual-vector-quantization đầu tiên cùng hidden state. NAR điền các lớp codec còn
 lại, sau đó MOSS codec trong model bundle chuyển chúng thành audio.
 
+Chỉ trong quá trình training, một bộ upsample thời gian 2x có tham số và CTC head căn chỉnh AR
+hidden theo từng target frame với chuỗi SentencePiece đích. EOS auxiliary loss cân bằng tăng cường
+class EOS hiện có. Các objective phụ cập nhật representation của AR nhưng không được đưa vào bundle
+inference native, ONNX hoặc Hugging Face.
+
+## Huấn luyện và export model
+
+Cấu hình đường dẫn dataset và tokenizer trong `configs/base.yaml`, sau đó bắt đầu hoặc tiếp tục:
+
+```bash
+sh train.sh                 # mặc định --resume auto
+sh train.sh --resume none   # chủ động bắt đầu run mới
+```
+
+Cấu hình training mặc định bật các objective chỉ dùng lúc huấn luyện:
+
+```yaml
+train:
+  ctc_loss_weight: 0.1
+  ctc_upsample_factor: 2
+  ctc_warmup_steps: 5000
+  eos_aux_loss_weight: 0.1
+
+sample:
+  leading_silence_ms: 20
+  sentence_pause_ms: 180
+  trailing_silence_ms: 20
+```
+
+Checkpoint chứa optimizer và trạng thái CTC để resume chính xác. Công cụ publish Hugging Face chỉ
+load và export trọng số AR/NAR; dataset, optimizer, CTC head, đường dẫn training và sample config
+cục bộ đều bị loại khỏi bundle:
+
+```bash
+uv sync --locked --group dev --all-extras
+sh scripts/push_to_hub.sh
+```
+
+Mặc định script publish `checkpoints/run_02/step_90000.pt` lên `DongLao/DongLao-TTS` và không yêu
+cầu console entry point `donglao-push-to-hub` đã được cài. Có thể ghi đè giá trị mặc định bằng các
+argument đứng sau, ví dụ:
+
+```bash
+sh scripts/push_to_hub.sh \
+  --checkpoint checkpoints/run_02/step_100000.pt \
+  --repo-id DongLao/DongLao-TTS-Test \
+  --private
+```
+
+Lệnh tương đương khi package đã được cài là:
+
+```bash
+uv run donglao-push-to-hub \
+  --config configs/base.yaml \
+  --checkpoint checkpoints/run_02/step_100000.pt \
+  --repo-id DongLao/DongLao-TTS \
+  --out-dir release-bundle
+```
+
+Xác thực phải được cung cấp rõ ràng qua `HF_TOKEN` hoặc đăng nhập Hugging Face CLI trước đó. Hãy
+kiểm tra model card, kết quả đánh giá, điều khoản dataset và bundle sinh ra trước khi publish.
+
 ## Đóng góp
 
 Issue và pull request có phạm vi rõ ràng đều được chào đón. Trước khi mở pull request, chạy:
@@ -182,7 +255,7 @@ Không commit dataset, checkpoint, credential, audio riêng tư hoặc model art
 
 ## Roadmap
 
-- [ ] Streaming hoặc chunked synthesis
+- [x] Streaming hoặc chunked synthesis
 - [ ] Inference server production và observability hook
 - [ ] Bổ sung kết quả đánh giá và ví dụ model card
 - [ ] Hỗ trợ thêm phiên bản Python và nền tảng

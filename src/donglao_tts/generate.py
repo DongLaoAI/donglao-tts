@@ -3,6 +3,43 @@ import torch.nn.functional as F
 
 from donglao_tts.models.embeddings import build_input_embeds
 
+DEFAULT_SENTENCE_PAUSE_MS = 180
+DEFAULT_LEADING_SILENCE_MS = 20
+DEFAULT_TRAILING_SILENCE_MS = 20
+
+
+def _silence_samples(sample_cfg, key, default_ms, sampling_rate):
+    duration_ms = sample_cfg.get(key, default_ms)
+    if (isinstance(duration_ms, bool)
+            or not isinstance(duration_ms, (int, float))
+            or duration_ms < 0):
+        raise ValueError(f"sample.{key} must be a non-negative number")
+    return round(float(duration_ms) * sampling_rate / 1000.0)
+
+
+def _silence_like(waveform, num_samples):
+    return waveform.new_zeros((*waveform.shape[:-1], num_samples))
+
+
+def _concatenate_sentence_waveforms(sentence_waveforms, sample_cfg, sampling_rate):
+    """Join sentences and add independently configurable leading/inter/trailing silence."""
+    leading_samples = _silence_samples(
+        sample_cfg, "leading_silence_ms", DEFAULT_LEADING_SILENCE_MS, sampling_rate)
+    pause_samples = _silence_samples(
+        sample_cfg, "sentence_pause_ms", DEFAULT_SENTENCE_PAUSE_MS, sampling_rate)
+    trailing_samples = _silence_samples(
+        sample_cfg, "trailing_silence_ms", DEFAULT_TRAILING_SILENCE_MS, sampling_rate)
+    parts = []
+    if leading_samples:
+        parts.append(_silence_like(sentence_waveforms[0], leading_samples))
+    for index, waveform in enumerate(sentence_waveforms):
+        if index and pause_samples:
+            parts.append(_silence_like(waveform, pause_samples))
+        parts.append(waveform)
+    if trailing_samples:
+        parts.append(_silence_like(sentence_waveforms[-1], trailing_samples))
+    return torch.cat(parts, dim=-1)
+
 
 def sample_from_logits(logits, temperature, top_k):
     """logits [V]. temperature<=0 means pure greedy (argmax), matching the old deterministic
@@ -227,7 +264,9 @@ def generate_batch_samples(cfg, target_texts, ar_model, nar_model, codec, sp, sp
         if len(sentence_waveforms) != len(target_text_ids_by_sentence):
             waveforms.append(None)
         else:
-            waveforms.append(torch.cat(sentence_waveforms, dim=-1))
+            waveforms.append(_concatenate_sentence_waveforms(
+                sentence_waveforms, cfg["sample"], codec.sampling_rate
+            ))
     return waveforms, ref_wav
 
 
@@ -239,7 +278,15 @@ def generate_sample_stream(cfg, ar_model, nar_model, codec, sp, special, codeboo
         cfg["sample"], codec, sp, pipeline
     )
     sample_cfg = cfg["sample"]
-    for target_text_ids in target_text_ids_by_sentence:
+    leading_samples = _silence_samples(
+        sample_cfg, "leading_silence_ms", DEFAULT_LEADING_SILENCE_MS, codec.sampling_rate)
+    pause_samples = _silence_samples(
+        sample_cfg, "sentence_pause_ms", DEFAULT_SENTENCE_PAUSE_MS, codec.sampling_rate)
+    trailing_samples = _silence_samples(
+        sample_cfg, "trailing_silence_ms", DEFAULT_TRAILING_SILENCE_MS, codec.sampling_rate)
+    emitted_audio = False
+    last_waveform = None
+    for sentence_index, target_text_ids in enumerate(target_text_ids_by_sentence):
         yielded = False
         for rvq0_codes, ar_hidden in ar_generate_rvq0_stream(
             ar_model, special, codebook_size, ref_text_ids, ref_codec, target_text_ids,
@@ -252,9 +299,18 @@ def generate_sample_stream(cfg, ar_model, nar_model, codec, sp, special, codeboo
             full_codes = nar_fill_layers(
                 nar_model, ar_hidden, rvq0_codes, num_quantizers, device, dtype
             )
-            yield codec.decode(full_codes.transpose(0, 1))
+            last_waveform = codec.decode(full_codes.transpose(0, 1))
+            if not emitted_audio:
+                if leading_samples > 0:
+                    yield _silence_like(last_waveform, leading_samples)
+                emitted_audio = True
+            yield last_waveform
         if not yielded:
             raise RuntimeError("the AR model generated zero audio frames for a sentence")
+        if sentence_index < len(target_text_ids_by_sentence) - 1 and pause_samples > 0:
+            yield _silence_like(last_waveform, pause_samples)
+    if trailing_samples > 0:
+        yield _silence_like(last_waveform, trailing_samples)
 
 
 def generate_sample(cfg, ar_model, nar_model, codec, sp, special, codebook_size,

@@ -1,9 +1,13 @@
 # Private datasets, training runs, checkpoints, and generated model bundles
 DATASET/
+checkpoints/
 run/
 run_*/
 debugs/
+outputs/
 tests/codec_rvq_output/
+hub-bundle/
+*-bundle/
 
 # Model weights, exports, generated media, and compiled arrays
 *.pt
@@ -21,6 +25,9 @@ tests/codec_rvq_output/
 *.jsonl
 *.model
 *.vocab
+*.bin
+*.tar.gz
+*.zip
 
 # Python build and test artifacts
 __pycache__/
@@ -32,6 +39,10 @@ dist/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 
 # Virtual environments, caches, and local configuration
 .venv/
@@ -41,6 +52,9 @@ env/
 .env.*
 !.env.example
 .cache/
+.huggingface/
+wandb/
+lightning_logs/
 configs/local.yaml
 configs/*.local.yaml
 *.log
@@ -50,8 +64,13 @@ configs/*.local.yaml
 *.key
 *.p12
 credentials.json
+secrets.json
+*.token
 
 # Editor and operating-system files
 .vscode/
 .idea/
 .DS_Store
+
+# Local scratch scripts with machine-specific model/data paths
+scripts/test_api.py
